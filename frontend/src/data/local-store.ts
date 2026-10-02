@@ -48,6 +48,15 @@ export function saveRows(key: string, rows: EntryRow[]): void {
   }
 }
 
+// 多个集合一次落库：绘图进度、层位深度这类要「一次写全」的改动走这里，避免只存一半。
+export function saveMany(entries: Record<string, EntryRow[]>): void {
+  const next = { ...allRows(), ...entries }
+  cache = next
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+  }
+}
+
 export function resetRows(key: string): EntryRow[] {
   const rows = clone(SEED_ROWS[key] ?? [])
   saveRows(key, rows)

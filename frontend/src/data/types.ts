@@ -32,6 +32,13 @@ export type ActionResult = {
   message: string
 }
 
+// 遗迹单位详情：单位行、绘图记录、验收台账结论，三处读的是同一份持久化数据。
+export type FeatureDetailResult = {
+  row: EntryRow
+  drawing: EntryRow | null
+  acceptance: EntryRow | null
+}
+
 export type OverviewResult = {
   cards: { label: string; value: number }[]
   modules: { name: string; created: number; pending: number; abnormal: number }[]
