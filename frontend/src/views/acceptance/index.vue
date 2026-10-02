@@ -67,6 +67,39 @@
       <span>共 {{ total }} 条探方验收记录</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
+
+    <section class="ledger-block">
+      <header class="ledger-head">
+        <h3>遗迹单位归位验收台账</h3>
+        <p class="page-desc">遗迹单位登记归位后的结论统一落在这里；校验不过的单件单独退回。</p>
+      </header>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th v-for="column in ledgerColumns" :key="column">{{ column }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="entry in ledger"
+            :key="String(entry.id)"
+            :class="{ 'row-returned': entry.归位结论 === '单独退回' }"
+          >
+            <td>{{ entry.id }}</td>
+            <td>{{ entry.单位编号 }}</td>
+            <td>{{ entry.归位日期 }}</td>
+            <td :class="{ 'error-text': entry.归位结论 === '单独退回' }">{{ entry.归位结论 }}</td>
+            <td>{{ entry.验收人 }}</td>
+            <td>{{ entry.开口层位 || '—' }}</td>
+            <td>{{ entry.现存深度 || '—' }}</td>
+            <td>{{ entry.退回原因 || '—' }}</td>
+          </tr>
+          <tr v-if="!ledger.length">
+            <td :colspan="ledgerColumns.length" class="empty-state">暂无归位验收记录</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
   </section>
 </template>
 
@@ -79,19 +112,22 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
-import type { EntryRow } from '@/data/types'
+import { listFeatureAcceptance } from '@/api/feature-service'
+import type { AcceptanceLedgerEntry, EntryRow } from '@/data/types'
 
 const meta = moduleMeta('acceptance')
 const columns = ["验收单号", "验收探方", "验收类别", "验收人", "验收日期", "遗留问题数", "验收结论", "验收状态"]
 const actions = ["提交验收", "确认通过", "要求整改"]
 const statuses = ["待验收", "验收中", "已通过", "已整改"]
 const stats = [{"label": "待验收探方", "value": 0}, {"label": "已通过探方", "value": 0}, {"label": "遗留问题总数", "value": 0}]
+const ledgerColumns = ["台账序号", "单位编号", "归位日期", "归位结论", "验收人", "开口层位", "现存深度", "退回原因"]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const ledger = ref<AcceptanceLedgerEntry[]>([])
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
@@ -128,6 +164,7 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    ledger.value = listFeatureAcceptance().slice().reverse()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '探方验收列表读取失败'
   }

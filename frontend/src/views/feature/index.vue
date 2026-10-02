@@ -3,10 +3,12 @@
     <header class="page-head">
       <div>
         <h2>遗迹单位管理</h2>
-        <p class="page-desc">维护遗迹单位，围绕单位编号、遗迹类型、所属探方、开口层位做登记、筛选与状态流转。</p>
+        <p class="page-desc">
+          维护遗迹单位，围绕现场编号、入库编号、遗迹类型、所属探方、开口层位做登记、筛选与状态流转。
+          编号以<strong>入库编号</strong>为准；绘图与层位资料在单位详情页一次写全。
+        </p>
       </div>
       <div class="page-actions">
-        <button class="btn primary" type="button" @click="openCreate">登记遗迹单位</button>
         <button class="btn" type="button" @click="exportRows">导出遗迹单位清单</button>
       </div>
     </header>
@@ -43,61 +45,101 @@
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in columns" :key="column">
+            <template v-if="column === '单位编号'">
+              <RouterLink class="link" :to="`/feature/${row.id}`">{{ displayCode(row) }}</RouterLink>
+              <span
+                v-if="String(row['现场编号'] ?? '') && String(row['入库编号'] ?? '') && String(row['现场编号']) !== String(row['入库编号'])"
+                class="code-note"
+                title="现场编号与入库编号不一致，已按入库编号取值"
+              >（现场：{{ row['现场编号'] }}）</span>
+            </template>
+            <template v-else>{{ row[column] === '' || row[column] == null ? '—' : row[column] }}</template>
+          </td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
             <button
-              v-for="action in actions"
-              :key="action"
+              v-if="String(row.status) === '待清理'"
               class="link"
               type="button"
-              @click="runAction(action, row)"
-            >
-              {{ action }}
-            </button>
+              @click="clean(row)"
+            >提交清理</button>
+            <button
+              v-if="canDraw(row)"
+              class="link"
+              type="button"
+              @click="openDrawing(row)"
+            >{{ getDrawing(Number(row.id)) ? '查看绘图' : '完成绘图' }}</button>
+            <button
+              v-if="String(row.status) === '已绘图'"
+              class="link"
+              type="button"
+              @click="returnFeature(row)"
+            >登记归位</button>
+            <button class="link" type="button" @click="openDetail(row)">详情</button>
           </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="columns.length + 2" class="empty-state">暂无遗迹单位数据，可先登记遗迹单位</td>
+          <td :colspan="columns.length + 2" class="empty-state">暂无遗迹单位数据</td>
         </tr>
       </tbody>
     </table>
 
     <footer class="page-foot">
       <span>共 {{ total }} 条遗迹单位记录</span>
-      <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
+      <span v-if="infoMessage" class="info-text">{{ infoMessage }}</span>
+      <span v-else-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
+import { downloadEntries, moduleMeta } from '@/api/local-service'
 import {
-  downloadEntries,
-  listEntries,
-  moduleMeta,
-  runAction as applyAction,
-} from '@/api/local-service'
+  canonicalFeatureCode,
+  getDrawing,
+  listFeatures,
+  registerReturn,
+  submitCleaning,
+} from '@/api/feature-service'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('feature')
-const columns = ["单位编号", "遗迹类型", "所属探方", "开口层位", "平面形状", "现存深度", "保存状况", "单位状态"]
-const actions = ["提交清理", "完成绘图", "登记归位"]
+const columns = ["单位编号", "遗迹类型", "所属探方", "开口层位", "现存深度", "保存状况"]
 const statuses = ["待清理", "清理中", "已绘图", "已归位"]
-const stats = [{"label": "清理中单位", "value": 0}, {"label": "待清理单位", "value": 0}, {"label": "已绘图单位", "value": 0}]
 
+const router = useRouter()
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const infoMessage = ref('')
 const filters = ref<Record<string, string>>({})
-const filterFields = columns.slice(0, 3)
+const filterFields = ["单位编号", "现场编号", "入库编号", "所属探方"]
+
+const stats = computed(() => [
+  { label: '清理中单位', value: rows.value.filter((row) => String(row.status) === '清理中').length },
+  { label: '待清理单位', value: rows.value.filter((row) => String(row.status) === '待清理').length },
+  { label: '已绘图单位', value: rows.value.filter((row) => ['已绘图', '已归位'].includes(String(row.status))).length },
+])
+
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+// 列表与详情统一取入库编号，两个编号不一致时不再各显示各的。
+function displayCode(row: EntryRow): string {
+  return canonicalFeatureCode(row) || '—'
+}
+
+function canDraw(row: EntryRow): boolean {
+  return ['待清理', '清理中', '已绘图'].includes(String(row.status))
+}
 
 function resetFilters() {
   filters.value = {}
@@ -108,26 +150,38 @@ function exportRows() {
   downloadEntries(meta.key)
 }
 
-function openCreate() {
-  errorMessage.value = '遗迹单位登记入口尚未接入审批流'
+function openDetail(row: EntryRow) {
+  void router.push(`/feature/${row.id}`)
 }
 
-function runAction(action: string, row: EntryRow) {
-  errorMessage.value = ''
-  const result = applyAction(meta.key, Number(row.id), action)
-  if (!result.ok) {
-    errorMessage.value = result.message
-    return
-  }
+function openDrawing(row: EntryRow) {
+  void router.push(`/feature/${row.id}?form=drawing`)
+}
+
+function flash(ok: boolean, message: string) {
+  infoMessage.value = ok ? message : ''
+  errorMessage.value = ok ? '' : message
+}
+
+function clean(row: EntryRow) {
+  const result = submitCleaning(Number(row.id))
+  flash(result.ok, result.message)
+  reload()
+}
+
+function returnFeature(row: EntryRow) {
+  const result = registerReturn(Number(row.id), '值班管理员')
+  flash(result.ok, result.message)
   reload()
 }
 
 function reload() {
   errorMessage.value = ''
+  infoMessage.value = ''
   try {
-    const payload = listEntries(meta.key, filters.value)
-    rows.value = payload.items
-    total.value = payload.total
+    const items = listFeatures(filters.value)
+    rows.value = items
+    total.value = items.length
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '遗迹单位列表读取失败'
   }
